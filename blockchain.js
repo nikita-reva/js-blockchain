@@ -1,4 +1,5 @@
-const SHA256 = require('crypto-js/sha256');
+const { Console } = require('console');
+const crypto = require('crypto');
 const EC = require('elliptic').ec;
 const ec = new EC('secp256k1');
 
@@ -10,7 +11,7 @@ class Transaction {
     }
 
     calculateHash() {
-        return SHA256(this.fromAddress + this.toAddress + this.amount).toString();
+        return crypto.createHash('sha256').update(this.fromAddress + this.toAddress + this.amount + this.timestamp).digest('hex');
     };
 
     signTransaction(signingKey) {
@@ -36,15 +37,15 @@ class Transaction {
 
 class Block {
     constructor(timestamp, transactions, previousHash = '') {
+        this.previousHash = previousHash;
         this.timestamp = timestamp;
         this.transactions = transactions;
-        this.previousHash;
+        this.nonce = 0;   
         this.hash = this.calculateHash();
-        this.nonce = 0; 
     }
 
     calculateHash() {
-       return SHA256(this.previousHash + this.timestamp + JSON.stringify(this.transactions) + this.nonce).toString();
+        return crypto.createHash('sha256').update(this.previousHash + this.timestamp + JSON.stringify(this.transactions) + this.nonce).digest('hex');
     } 
 
     mineBlock(difficulty) {
@@ -70,7 +71,7 @@ class Block {
 class Blockchain {
     constructor() {
         this.chain = [this.createGenesisBlock()];
-        this.difficulty = 2;
+        this.difficulty = 3;
         this.pendingTransactions = [];
         this.miningReward = 100;
     }
@@ -87,7 +88,7 @@ class Blockchain {
         const rewardTx = new Transaction(null, miningRewardAddress, this.miningReward);
         this.pendingTransactions.push(rewardTx);
 
-        let block = new Block(Date.now(), this.pendingTransactions);
+        let block = new Block(Date.now(), this.pendingTransactions, this.getLatestBlock().hash);
         block.mineBlock(this.difficulty);
         
         console.log('Block successfully mined!');
@@ -103,6 +104,10 @@ class Blockchain {
 
         if(!transaction.isValid()) {
             throw new Error('Cannot add invalid transaction to chain!');
+        }
+
+        if(this.getBalanceOfAddress(transaction.fromAddress) + 100 < transaction.amount) {
+            throw new Error('Not enough balance');
         }
 
         this.pendingTransactions.push(transaction);
@@ -124,6 +129,21 @@ class Blockchain {
         return balance;
     }
 
+    getAllTransactionsForWallet(address) {
+        const txs = [];
+    
+        for (const block of this.chain) {
+            for (const tx of block.transactions) {
+                if (tx.fromAddress === address || tx.toAddress === address) {
+                    txs.push(tx);
+                }
+            }
+        }
+    
+        Console.log('Get transactions for wallet count: %s', txs.length);
+        return txs;
+      }
+
     isChainValid() {
         const realGenesis = JSON.stringify(this.createGenesisBlock());
 
@@ -133,7 +153,7 @@ class Blockchain {
 
         for (let i = 1; i < this.chain.length; i++) {
             const currentBlock = this.chain[i];
-            // const previousBlock = this.chain[i-1];
+            const previousBlock = this.chain[i - 1];
 
             if (!currentBlock.hasValidTransactions()) {
                 return false;
@@ -143,9 +163,9 @@ class Blockchain {
                 return false;
             }
 
-            // if(currentBlock.previousHash !== previousBlock.hash) {
-            // return false;
-            // }
+            if(currentBlock.previousHash !== previousBlock.calculateHash()) {
+                return false;
+            }
         }
 
         return true;
